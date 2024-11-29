@@ -1,175 +1,230 @@
 import streamlit as st
-import networkx as nx
-import plotly.graph_objects as go
-from streamlit_agraph import agraph, Node, Edge, Config
+from streamlit_draggable import st_draggable
+from streamlit_custom_notification_box import custom_notification_box
 import json
 from datetime import datetime
 import uuid
-import pandas as pd
-from streamlit_javascript import st_javascript
-import streamlit_nested_layout
 
-class MindMap:
-    def __init__(self):
-        if 'nodes' not in st.session_state:
-            st.session_state.nodes = []
-        if 'edges' not in st.session_state:
-            st.session_state.edges = []
-        if 'selected_node' not in st.session_state:
-            st.session_state.selected_node = None
-        if 'node_colors' not in st.session_state:
-            st.session_state.node_colors = {}
-        if 'current_path' not in st.session_state:
-            st.session_state.current_path = []
+class MindmapNode:
+    def __init__(self, text="", x=0, y=0):
+        self.id = str(uuid.uuid4())
+        self.text = text
+        self.x = x
+        self.y = y
+        self.connections = []
 
-    def generate_id(self):
-        return str(uuid.uuid4())
+def init_session_state():
+    if 'nodes' not in st.session_state:
+        st.session_state.nodes = {}
+    if 'dragging' not in st.session_state:
+        st.session_state.dragging = None
+    if 'connecting' not in st.session_state:
+        st.session_state.connecting = None
+    if 'theme' not in st.session_state:
+        st.session_state.theme = 'light'
 
-    def add_node(self, text, parent_id=None, color="#1f77b4"):
-        node_id = self.generate_id()
-        st.session_state.nodes.append({
-            "id": node_id,
-            "label": text,
-            "color": color,
-            "size": 25
-        })
-        if parent_id:
-            st.session_state.edges.append({
-                "source": parent_id,
-                "target": node_id,
-                "type": "STRAIGHT"
-            })
-        return node_id
-
-    def remove_node(self, node_id):
-        # Remove the node
-        st.session_state.nodes = [n for n in st.session_state.nodes if n["id"] != node_id]
-        # Remove all edges connected to this node
-        st.session_state.edges = [e for e in st.session_state.edges 
-                                if e["source"] != node_id and e["target"] != node_id]
-
-    def get_node_children(self, node_id):
-        return [edge["target"] for edge in st.session_state.edges if edge["source"] == node_id]
-
-    def get_node_by_id(self, node_id):
-        for node in st.session_state.nodes:
-            if node["id"] == node_id:
-                return node
-        return None
-
-    def export_to_json(self):
-        data = {
-            "nodes": st.session_state.nodes,
-            "edges": st.session_state.edges
+def create_custom_css():
+    return """
+    <style>
+        .mindmap-node {
+            background-color: #ffffff;
+            border: 2px solid #4CAF50;
+            border-radius: 10px;
+            padding: 10px;
+            margin: 5px;
+            cursor: move;
+            position: absolute;
+            min-width: 100px;
+            max-width: 200px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
         }
-        return json.dumps(data, indent=2)
-
-    def import_from_json(self, json_str):
-        try:
-            data = json.loads(json_str)
-            st.session_state.nodes = data["nodes"]
-            st.session_state.edges = data["edges"]
-            return True
-        except Exception as e:
-            st.error(f"Error importing data: {str(e)}")
-            return False
-
-    def render(self):
-        config = Config(
-            width=750,
-            height=950,
-            directed=True,
-            physics=True,
-            hierarchical=False,
-            nodeHighlightBehavior=True,
-            highlightColor="#F7A7A6",
-            collapsible=True
-        )
-
-        return agraph(
-            nodes=[Node(**node) for node in st.session_state.nodes],
-            edges=[Edge(**edge) for edge in st.session_state.edges],
-            config=config
-        )
-
-def create_node_path(mindmap, text, parent_id=None):
-    cols = st.columns([3, 1, 1])
-    with cols[0]:
-        node_text = st.text_input("Node text", text, key=f"text_{uuid.uuid4()}")
-    with cols[1]:
-        color = st.color_picker("Color", "#1f77b4", key=f"color_{uuid.uuid4()}")
-    with cols[2]:
-        if st.button("Add", key=f"add_{uuid.uuid4()}"):
-            node_id = mindmap.add_node(node_text, parent_id, color)
-            st.session_state.current_path.append(node_id)
-            st.experimental_rerun()
-
-def render_node_controls(mindmap, node_id):
-    node = mindmap.get_node_by_id(node_id)
-    if node:
-        cols = st.columns([3, 1, 1, 1])
-        with cols[0]:
-            st.text(node["label"])
-        with cols[1]:
-            if st.button("Add Child", key=f"add_child_{node_id}"):
-                st.session_state.current_path.append(node_id)
-                st.experimental_rerun()
-        with cols[2]:
-            if st.button("Remove", key=f"remove_{node_id}"):
-                mindmap.remove_node(node_id)
-                st.experimental_rerun()
-        with cols[3]:
-            if st.button("Edit", key=f"edit_{node_id}"):
-                st.session_state.selected_node = node_id
-                st.experimental_rerun()
+        
+        .mindmap-node:hover {
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            transform: translateY(-2px);
+        }
+        
+        .mindmap-canvas {
+            position: relative;
+            width: 100%;
+            height: 800px;
+            background-color: #f5f5f5;
+            border-radius: 15px;
+            overflow: hidden;
+        }
+        
+        .connection-line {
+            position: absolute;
+            height: 2px;
+            background-color: #4CAF50;
+            transform-origin: left center;
+            pointer-events: none;
+        }
+        
+        .node-controls {
+            display: flex;
+            gap: 5px;
+            margin-top: 5px;
+        }
+        
+        .control-button {
+            padding: 2px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        .connect-button {
+            background-color: #2196F3;
+            color: white;
+        }
+        
+        .delete-button {
+            background-color: #f44336;
+            color: white;
+        }
+        
+        .floating-menu {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
+    """
 
 def main():
-    st.set_page_config(layout="wide", page_title="Advanced Mindmap Creator")
+    st.set_page_config(layout="wide", page_title="Drag & Drop Mindmap")
     
-    st.title("Advanced Interactive Mindmap Creator")
+    init_session_state()
+    st.markdown(create_custom_css(), unsafe_allow_html=True)
     
-    mindmap = MindMap()
+    st.title("Interactive Drag & Drop Mindmap Creator")
     
-    # Main layout
-    col1, col2 = st.columns([2, 3])
-    
-    with col1:
-        st.subheader("Controls")
+    # Main layout with sidebar
+    with st.sidebar:
+        st.header("Controls")
         
-        # Add root node
-        if not st.session_state.nodes:
-            st.write("Create root node:")
-            create_node_path(mindmap, "Root")
+        # Add new node
+        new_node_text = st.text_input("New Node Text")
+        if st.button("Add Node"):
+            new_node = MindmapNode(new_node_text, x=50, y=50)
+            st.session_state.nodes[new_node.id] = new_node
         
-        # Node controls
-        st.write("Existing nodes:")
-        for node in st.session_state.nodes:
-            render_node_controls(mindmap, node["id"])
+        # Theme switcher
+        theme = st.selectbox("Theme", ['light', 'dark'], 
+                           index=0 if st.session_state.theme == 'light' else 1)
+        if theme != st.session_state.theme:
+            st.session_state.theme = theme
+            st.experimental_rerun()
         
-        # Import/Export
-        st.subheader("Import/Export")
-        
-        # Export
+        # Export/Import
         if st.button("Export Mindmap"):
-            json_str = mindmap.export_to_json()
+            data = {
+                'nodes': {
+                    nid: {
+                        'text': node.text,
+                        'x': node.x,
+                        'y': node.y,
+                        'connections': node.connections
+                    } for nid, node in st.session_state.nodes.items()
+                }
+            }
             st.download_button(
                 "Download JSON",
-                json_str,
+                json.dumps(data, indent=2),
                 file_name=f"mindmap_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json"
             )
         
-        # Import
         uploaded_file = st.file_uploader("Import Mindmap", type="json")
         if uploaded_file:
-            json_str = uploaded_file.read().decode()
-            if mindmap.import_from_json(json_str):
+            try:
+                data = json.loads(uploaded_file.read())
+                st.session_state.nodes = {
+                    nid: MindmapNode(
+                        node['text'],
+                        node['x'],
+                        node['y']
+                    ) for nid, node in data['nodes'].items()
+                }
+                for nid, node_data in data['nodes'].items():
+                    st.session_state.nodes[nid].connections = node_data['connections']
                 st.success("Mindmap imported successfully!")
-                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Error importing mindmap: {str(e)}")
+    
+    # Main canvas
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        st.markdown('<div class="mindmap-canvas">', unsafe_allow_html=True)
+        
+        # Render nodes
+        for node_id, node in st.session_state.nodes.items():
+            dragged = st_draggable(
+                key=f"node_{node_id}",
+                data={"text": node.text, "id": node_id},
+                container_class="mindmap-node",
+            )
+            
+            if dragged:
+                node.x = dragged['x']
+                node.y = dragged['y']
+            
+            # Render node content
+            st.markdown(f"""
+                <div style="position: absolute; left: {node.x}px; top: {node.y}px;">
+                    <div class="mindmap-node">
+                        <div>{node.text}</div>
+                        <div class="node-controls">
+                            <button class="control-button connect-button" 
+                                    onclick="connect('{node_id}')">
+                                Connect
+                            </button>
+                            <button class="control-button delete-button" 
+                                    onclick="deleteNode('{node_id}')">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        # Render connections
+        for node_id, node in st.session_state.nodes.items():
+            for connection in node.connections:
+                if connection in st.session_state.nodes:
+                    target = st.session_state.nodes[connection]
+                    # Calculate line properties
+                    dx = target.x - node.x
+                    dy = target.y - node.y
+                    length = (dx**2 + dy**2)**0.5
+                    angle = math.atan2(dy, dx)
+                    
+                    st.markdown(f"""
+                        <div class="connection-line"
+                             style="left: {node.x}px;
+                                    top: {node.y}px;
+                                    width: {length}px;
+                                    transform: rotate({angle}rad);">
+                        </div>
+                    """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
     with col2:
-        st.subheader("Mindmap Visualization")
-        mindmap.render()
+        st.subheader("Selected Node")
+        if st.session_state.dragging:
+            node = st.session_state.nodes[st.session_state.dragging]
+            st.write(f"Text: {node.text}")
+            st.write(f"Position: ({node.x}, {node.y})")
+            if st.button("Edit Text"):
+                new_text = st.text_input("New Text", node.text)
+                if st.button("Save"):
+                    node.text = new_text
 
 if __name__ == "__main__":
     main()
