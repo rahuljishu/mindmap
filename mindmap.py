@@ -1,9 +1,11 @@
 import streamlit as st
-from streamlit_draggable import st_draggable
-from streamlit_custom_notification_box import custom_notification_box
+from streamlit_extras.switch_page_button import switch_page
+from streamlit_extras.add_vertical_space import add_vertical_space
 import json
 from datetime import datetime
 import uuid
+import plotly.graph_objects as go
+import networkx as nx
 
 class MindmapNode:
     def __init__(self, text="", x=0, y=0):
@@ -16,111 +18,137 @@ class MindmapNode:
 def init_session_state():
     if 'nodes' not in st.session_state:
         st.session_state.nodes = {}
-    if 'dragging' not in st.session_state:
-        st.session_state.dragging = None
-    if 'connecting' not in st.session_state:
-        st.session_state.connecting = None
+    if 'selected_node' not in st.session_state:
+        st.session_state.selected_node = None
+    if 'connecting_mode' not in st.session_state:
+        st.session_state.connecting_mode = False
     if 'theme' not in st.session_state:
         st.session_state.theme = 'light'
 
-def create_custom_css():
-    return """
-    <style>
-        .mindmap-node {
-            background-color: #ffffff;
-            border: 2px solid #4CAF50;
-            border-radius: 10px;
-            padding: 10px;
-            margin: 5px;
-            cursor: move;
-            position: absolute;
-            min-width: 100px;
-            max-width: 200px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            transition: all 0.3s ease;
-        }
-        
-        .mindmap-node:hover {
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-            transform: translateY(-2px);
-        }
-        
-        .mindmap-canvas {
-            position: relative;
-            width: 100%;
-            height: 800px;
-            background-color: #f5f5f5;
-            border-radius: 15px;
-            overflow: hidden;
-        }
-        
-        .connection-line {
-            position: absolute;
-            height: 2px;
-            background-color: #4CAF50;
-            transform-origin: left center;
-            pointer-events: none;
-        }
-        
-        .node-controls {
-            display: flex;
-            gap: 5px;
-            margin-top: 5px;
-        }
-        
-        .control-button {
-            padding: 2px 8px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-        }
-        
-        .connect-button {
-            background-color: #2196F3;
-            color: white;
-        }
-        
-        .delete-button {
-            background-color: #f44336;
-            color: white;
-        }
-        
-        .floating-menu {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 1000;
-        }
-    </style>
-    """
+def create_mindmap_graph():
+    G = nx.Graph()
+    
+    # Add nodes
+    for node_id, node in st.session_state.nodes.items():
+        G.add_node(node_id, pos=(node.x, node.y), text=node.text)
+    
+    # Add edges
+    for node_id, node in st.session_state.nodes.items():
+        for connection in node.connections:
+            if connection in st.session_state.nodes:
+                G.add_edge(node_id, connection)
+    
+    return G
+
+def create_plotly_figure(G):
+    pos = nx.get_node_attributes(G, 'pos')
+    
+    # Create edges
+    edge_x = []
+    edge_y = []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=0.5, color='#888'),
+        hoverinfo='none',
+        mode='lines')
+
+    # Create nodes
+    node_x = []
+    node_y = []
+    node_text = []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        node_text.append(G.nodes[node]['text'])
+
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        hoverinfo='text',
+        text=node_text,
+        textposition="bottom center",
+        marker=dict(
+            showscale=False,
+            size=30,
+            line_width=2))
+
+    # Create figure
+    fig = go.Figure(data=[edge_trace, node_trace],
+                   layout=go.Layout(
+                       showlegend=False,
+                       hovermode='closest',
+                       margin=dict(b=0, l=0, r=0, t=0),
+                       xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                       yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                   )
+    
+    # Make it interactive
+    fig.update_layout(
+        dragmode='pan',
+        clickmode='event+select'
+    )
+    
+    return fig
 
 def main():
-    st.set_page_config(layout="wide", page_title="Drag & Drop Mindmap")
+    st.set_page_config(layout="wide", page_title="Interactive Mindmap")
     
     init_session_state()
-    st.markdown(create_custom_css(), unsafe_allow_html=True)
     
-    st.title("Interactive Drag & Drop Mindmap Creator")
+    st.title("Interactive Mindmap Creator")
     
-    # Main layout with sidebar
-    with st.sidebar:
-        st.header("Controls")
+    # Main layout
+    col1, col2 = st.columns([1, 3])
+    
+    with col1:
+        st.subheader("Controls")
         
         # Add new node
-        new_node_text = st.text_input("New Node Text")
+        new_node_text = st.text_input("Node Text")
         if st.button("Add Node"):
-            new_node = MindmapNode(new_node_text, x=50, y=50)
-            st.session_state.nodes[new_node.id] = new_node
+            if new_node_text:
+                new_node = MindmapNode(new_node_text, 
+                                     x=len(st.session_state.nodes) * 1.0,
+                                     y=len(st.session_state.nodes) * 1.0)
+                st.session_state.nodes[new_node.id] = new_node
+                st.success(f"Added node: {new_node_text}")
         
-        # Theme switcher
-        theme = st.selectbox("Theme", ['light', 'dark'], 
-                           index=0 if st.session_state.theme == 'light' else 1)
-        if theme != st.session_state.theme:
-            st.session_state.theme = theme
-            st.experimental_rerun()
+        # Node selection for connections
+        if st.session_state.nodes:
+            st.subheader("Connect Nodes")
+            
+            node_names = {node_id: node.text for node_id, node 
+                         in st.session_state.nodes.items()}
+            
+            source_node = st.selectbox("From Node", 
+                                     options=list(node_names.keys()),
+                                     format_func=lambda x: node_names[x],
+                                     key="source")
+            
+            target_node = st.selectbox("To Node", 
+                                     options=list(node_names.keys()),
+                                     format_func=lambda x: node_names[x],
+                                     key="target")
+            
+            if st.button("Connect Nodes"):
+                if source_node != target_node:
+                    source = st.session_state.nodes[source_node]
+                    if target_node not in source.connections:
+                        source.connections.append(target_node)
+                        st.success("Nodes connected!")
+                else:
+                    st.error("Cannot connect a node to itself!")
         
         # Export/Import
+        st.subheader("Export/Import")
+        
         if st.button("Export Mindmap"):
             data = {
                 'nodes': {
@@ -156,75 +184,46 @@ def main():
             except Exception as e:
                 st.error(f"Error importing mindmap: {str(e)}")
     
-    # Main canvas
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
-        st.markdown('<div class="mindmap-canvas">', unsafe_allow_html=True)
-        
-        # Render nodes
-        for node_id, node in st.session_state.nodes.items():
-            dragged = st_draggable(
-                key=f"node_{node_id}",
-                data={"text": node.text, "id": node_id},
-                container_class="mindmap-node",
-            )
-            
-            if dragged:
-                node.x = dragged['x']
-                node.y = dragged['y']
-            
-            # Render node content
-            st.markdown(f"""
-                <div style="position: absolute; left: {node.x}px; top: {node.y}px;">
-                    <div class="mindmap-node">
-                        <div>{node.text}</div>
-                        <div class="node-controls">
-                            <button class="control-button connect-button" 
-                                    onclick="connect('{node_id}')">
-                                Connect
-                            </button>
-                            <button class="control-button delete-button" 
-                                    onclick="deleteNode('{node_id}')">
-                                Delete
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
-        
-        # Render connections
-        for node_id, node in st.session_state.nodes.items():
-            for connection in node.connections:
-                if connection in st.session_state.nodes:
-                    target = st.session_state.nodes[connection]
-                    # Calculate line properties
-                    dx = target.x - node.x
-                    dy = target.y - node.y
-                    length = (dx**2 + dy**2)**0.5
-                    angle = math.atan2(dy, dx)
-                    
-                    st.markdown(f"""
-                        <div class="connection-line"
-                             style="left: {node.x}px;
-                                    top: {node.y}px;
-                                    width: {length}px;
-                                    transform: rotate({angle}rad);">
-                        </div>
-                    """, unsafe_allow_html=True)
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-    
     with col2:
-        st.subheader("Selected Node")
-        if st.session_state.dragging:
-            node = st.session_state.nodes[st.session_state.dragging]
-            st.write(f"Text: {node.text}")
-            st.write(f"Position: ({node.x}, {node.y})")
-            if st.button("Edit Text"):
-                new_text = st.text_input("New Text", node.text)
-                if st.button("Save"):
-                    node.text = new_text
+        st.subheader("Mindmap Visualization")
+        
+        if st.session_state.nodes:
+            # Create and display the graph
+            G = create_mindmap_graph()
+            fig = create_plotly_figure(G)
+            
+            # Make the plot interactive
+            selected_points = plotly_events(fig, click_event=True)
+            
+            if selected_points:
+                point = selected_points[0]
+                node_idx = point['pointIndex']
+                node_id = list(st.session_state.nodes.keys())[node_idx]
+                st.session_state.selected_node = node_id
+        else:
+            st.info("Add some nodes to start creating your mindmap!")
+        
+        # Node editing
+        if st.session_state.selected_node:
+            st.subheader("Edit Selected Node")
+            node = st.session_state.nodes[st.session_state.selected_node]
+            
+            new_text = st.text_input("Edit Text", node.text)
+            if st.button("Update Node"):
+                node.text = new_text
+                st.success("Node updated!")
+            
+            if st.button("Delete Node"):
+                # Remove connections to this node
+                for other_node in st.session_state.nodes.values():
+                    if st.session_state.selected_node in other_node.connections:
+                        other_node.connections.remove(st.session_state.selected_node)
+                
+                # Remove the node
+                del st.session_state.nodes[st.session_state.selected_node]
+                st.session_state.selected_node = None
+                st.success("Node deleted!")
+                st.experimental_rerun()
 
 if __name__ == "__main__":
     main()
