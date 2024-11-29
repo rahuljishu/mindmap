@@ -1,9 +1,9 @@
 streamlit==1.29.0
-streamlit-draggable==0.3.2
-streamlit-custom-notification-box==0.1.1
+streamlit-extras==0.3.6
+plotly==5.18.0
+networkx==3.2.1
 python-dateutil==2.8.2
 protobuf==4.21.12
 setuptools>=41.0.0
 six>=1.16.0
 packaging>=23.1
-uuid==1.30
