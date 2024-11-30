@@ -1,62 +1,35 @@
 # app.py
 import streamlit as st
-import graphviz
+import streamlit.components.v1 as components
+from pyvis.network import Network
+import json
+import os
 
-def create_mindmap():
-    # Create a new directed graph
-    dot = graphviz.Digraph()
-    dot.attr(rankdir='LR')  # Left to right layout
+def create_network():
+    # Create a network with pyvis
+    net = Network(height="750px", width="100%", bgcolor="#ffffff", font_color="black")
     
-    # Set graph attributes for better visualization
-    dot.attr('node', shape='box', style='rounded,filled', fontname='Arial')
-    dot.attr('edge', color='#666666')
+    # Add some physics to make it look better
+    net.force_atlas_2based()
+    net.show_buttons(filter_=['physics'])
+    return net
+
+def save_network(net, path='temp_network.html'):
+    # Save the network to a html file
+    net.save_graph(path)
     
-    # Add central node
-    dot.node('mind_map', 'What is a\nMind Map?', fillcolor='#FF69B4', fontcolor='white')
-    
-    # Define main topics and their colors
-    main_topics = {
-        'writing': ('#48D1CC', [
-            'Articles', 'Thesis', 'Novels', 'Blogs', 'Essays', 'Scripts'
-        ]),
-        'organizing': ('#FF6347', [
-            'Structure & Relationships', 'Outline & Framework Design', 
-            'Organizational Charts'
-        ]),
-        'more': ('#FFD700', [
-            'Expressing Creativity', 'Team Building', 'Family Trees'
-        ]),
-        'capturing_ideas': ('#FFA500', [
-            'Problem Solving', 'Projects', 'Brainstorming'
-        ]),
-        'planning': ('#87CEEB', [
-            'Shopping Lists', 'Vacation Checklists', 'Project Management',
-            'Weekly Goals', 'Family Chores', 'Homework'
-        ]),
-        'note_taking': ('#DDA0DD', [
-            'Courses', 'Presentations', 'Lectures', 'Studying'
-        ])
-    }
-    
-    # Add main topics and their subtopics
-    for topic, (color, subtopics) in main_topics.items():
-        # Add main topic node
-        topic_name = topic.replace('_', ' ').title()
-        dot.node(topic, topic_name, fillcolor=color, fontcolor='white')
-        dot.edge('mind_map', topic)
-        
-        # Add subtopics
-        for idx, subtopic in enumerate(subtopics):
-            subtopic_id = f"{topic}_{idx}"
-            dot.node(subtopic_id, subtopic, fillcolor=color, fontcolor='white')
-            dot.edge(topic, subtopic_id)
-    
-    return dot
+def load_network_html(path='temp_network.html'):
+    # Load the saved html file
+    with open(path, 'r', encoding='utf-8') as f:
+        html = f.read()
+    # Remove the unnecessary buttons and keep only the network
+    html = html.replace('height: 750px;', 'height: 600px;')
+    return html
 
 def main():
     st.set_page_config(page_title="Mind Map Creator", layout="wide")
     
-    # Add custom styling
+    # Add custom CSS
     st.markdown("""
         <style>
         .stApp {
@@ -65,48 +38,93 @@ def main():
         .main {
             padding: 2rem;
         }
-        h1 {
-            color: #2c3e50;
-            text-align: center;
-            margin-bottom: 2rem;
+        .stButton button {
+            width: 100%;
         }
         </style>
     """, unsafe_allow_html=True)
     
     st.title("Interactive Mind Map Creator")
     
-    # Create tabs for different views
-    tab1, tab2 = st.tabs(["Mind Map View", "About"])
+    # Initialize session state
+    if 'nodes' not in st.session_state:
+        st.session_state.nodes = []
+    if 'edges' not in st.session_state:
+        st.session_state.edges = []
+    if 'central_node_added' not in st.session_state:
+        st.session_state.central_node_added = False
+        
+    # Create two columns
+    col1, col2 = st.columns([3, 1])
     
-    with tab1:
-        # Create and display the mind map
-        mind_map = create_mindmap()
-        st.graphviz_chart(mind_map)
+    with col2:
+        st.subheader("Add Node")
         
-        # Add download button
-        st.download_button(
-            label="Download Mind Map as PDF",
-            data=mind_map.pipe(format='pdf'),
-            file_name="mindmap.pdf",
-            mime="application/pdf"
-        )
+        # Add central node first
+        if not st.session_state.central_node_added:
+            central_title = st.text_input("Central Topic", "What is a Mind Map?")
+            if st.button("Add Central Topic"):
+                st.session_state.nodes.append({
+                    "id": 0,
+                    "label": central_title,
+                    "color": "#FF69B4"
+                })
+                st.session_state.central_node_added = True
+                st.experimental_rerun()
+        
+        # Only show other options if central node is added
+        if st.session_state.central_node_added:
+            node_title = st.text_input("Node Title")
+            
+            # Create color picker for nodes
+            node_color = st.color_picker("Node Color", "#1f77b4")
+            
+            # Parent node selection
+            if st.session_state.nodes:
+                parent_nodes = [node["label"] for node in st.session_state.nodes]
+                parent = st.selectbox("Connect to", options=parent_nodes)
+                parent_idx = parent_nodes.index(parent)
+            
+            if st.button("Add Node"):
+                if node_title:
+                    # Add node
+                    new_node_id = len(st.session_state.nodes)
+                    st.session_state.nodes.append({
+                        "id": new_node_id,
+                        "label": node_title,
+                        "color": node_color
+                    })
+                    # Add edge
+                    st.session_state.edges.append({
+                        "from": parent_idx,
+                        "to": new_node_id
+                    })
+                    st.experimental_rerun()
+        
+        if st.button("Clear Mind Map"):
+            st.session_state.nodes = []
+            st.session_state.edges = []
+            st.session_state.central_node_added = False
+            st.experimental_rerun()
     
-    with tab2:
-        st.markdown("""
-        ### About Mind Mapping
+    with col1:
+        # Create network
+        net = create_network()
         
-        Mind mapping is a powerful brainstorming and organization tool that helps you:
-        - Organize information visually
-        - Generate creative ideas
-        - Connect related concepts
-        - Improve memory and retention
-        - Plan projects effectively
+        # Add nodes and edges from session state
+        for node in st.session_state.nodes:
+            net.add_node(node["id"], label=node["label"], color=node["color"])
         
-        This tool allows you to visualize mind maps in an intuitive way. You can:
-        - View the complete mind map structure
-        - Download the mind map as a PDF
-        - Use it for various purposes like planning, note-taking, and brainstorming
-        """)
+        for edge in st.session_state.edges:
+            net.add_edge(edge["from"], edge["to"])
+        
+        # Save and display network
+        save_network(net)
+        components.html(load_network_html(), height=600)
+        
+        # Clean up the temporary file
+        if os.path.exists('temp_network.html'):
+            os.remove('temp_network.html')
 
 if __name__ == "__main__":
     main()
