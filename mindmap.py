@@ -1,110 +1,112 @@
 # app.py
 import streamlit as st
-from streamlit_agraph import agraph, Node, Edge, Config
-import random
-
-def generate_random_color():
-    """Generate a random hex color."""
-    return "#{:06x}".format(random.randint(0, 0xFFFFFF))
+import graphviz
 
 def create_mindmap():
-    st.title("Interactive Mind Map Creator")
-    st.sidebar.header("Mind Map Controls")
-
-    # Create nodes
-    nodes = []
-    edges = []
+    # Create a new directed graph
+    dot = graphviz.Digraph()
+    dot.attr(rankdir='LR')  # Left to right layout
     
-    # Central node
-    central_node = Node(id="mind_map", 
-                       label="What is a Mind Map?",
-                       size=25,
-                       color="#FF69B4")  # Pink color for central node
-    nodes.append(central_node)
-
-    # Main branches
+    # Set graph attributes for better visualization
+    dot.attr('node', shape='box', style='rounded,filled', fontname='Arial')
+    dot.attr('edge', color='#666666')
+    
+    # Add central node
+    dot.node('mind_map', 'What is a\nMind Map?', fillcolor='#FF69B4', fontcolor='white')
+    
+    # Define main topics and their colors
     main_topics = {
-        "writing": "#48D1CC",  # Turquoise
-        "organizing": "#FF6347",  # Tomato
-        "more": "#FFD700",  # Gold
-        "capturing_ideas": "#FFA500",  # Orange
-        "planning": "#87CEEB",  # Sky Blue
-        "note_taking": "#DDA0DD"  # Plum
+        'writing': ('#48D1CC', [
+            'Articles', 'Thesis', 'Novels', 'Blogs', 'Essays', 'Scripts'
+        ]),
+        'organizing': ('#FF6347', [
+            'Structure & Relationships', 'Outline & Framework Design', 
+            'Organizational Charts'
+        ]),
+        'more': ('#FFD700', [
+            'Expressing Creativity', 'Team Building', 'Family Trees'
+        ]),
+        'capturing_ideas': ('#FFA500', [
+            'Problem Solving', 'Projects', 'Brainstorming'
+        ]),
+        'planning': ('#87CEEB', [
+            'Shopping Lists', 'Vacation Checklists', 'Project Management',
+            'Weekly Goals', 'Family Chores', 'Homework'
+        ]),
+        'note_taking': ('#DDA0DD', [
+            'Courses', 'Presentations', 'Lectures', 'Studying'
+        ])
     }
-
-    # Add main topic nodes and connect to central node
-    for topic, color in main_topics.items():
-        node = Node(id=topic,
-                   label=topic.replace("_", " ").title(),
-                   size=20,
-                   color=color)
-        nodes.append(node)
-        edges.append(Edge(source="mind_map", target=topic, color=color))
-
-    # Subtopics
-    subtopics = {
-        "writing": ["Articles", "Thesis", "Novels", "Blogs", "Essays", "Scripts"],
-        "organizing": ["Structure & Relationships", "Outline & Framework Design", "Organizational Charts"],
-        "more": ["Expressing Creativity", "Team Building", "Family Trees"],
-        "capturing_ideas": ["Problem Solving", "Projects", "Brainstorming"],
-        "planning": ["Shopping Lists", "Vacation Checklists", "Project Management", 
-                    "Weekly Goals", "Family Chores", "Homework"],
-        "note_taking": ["Courses", "Presentations", "Lectures", "Studying"]
-    }
-
-    # Add subtopic nodes and connect to main topics
-    for main_topic, sub_list in subtopics.items():
-        main_color = main_topics[main_topic]
-        for subtopic in sub_list:
-            subtopic_id = f"{main_topic}_{subtopic.lower().replace(' ', '_')}"
-            node = Node(id=subtopic_id,
-                       label=subtopic,
-                       size=15,
-                       color=main_color)
-            nodes.append(node)
-            edges.append(Edge(source=main_topic, target=subtopic_id, color=main_color))
-
-    # Configuration for the graph
-    config = Config(width=1000,
-                   height=800,
-                   directed=False,
-                   physics=True,
-                   hierarchical=False,
-                   nodeHighlightBehavior=True,
-                   highlightColor="#F7A7A6",
-                   collapsible=True,
-                   node={'labelProperty': 'label'},
-                   link={'labelProperty': 'label', 'renderLabel': False},
-                   maxZoom=2,
-                   minZoom=0.1,
-                   staticGraphWithDragAndDrop=False,
-                   staticGraph=False,
-                   initialZoom=0.8)
-
-    # Render the graph
-    return agraph(nodes=nodes, 
-                 edges=edges, 
-                 config=config)
+    
+    # Add main topics and their subtopics
+    for topic, (color, subtopics) in main_topics.items():
+        # Add main topic node
+        topic_name = topic.replace('_', ' ').title()
+        dot.node(topic, topic_name, fillcolor=color, fontcolor='white')
+        dot.edge('mind_map', topic)
+        
+        # Add subtopics
+        for idx, subtopic in enumerate(subtopics):
+            subtopic_id = f"{topic}_{idx}"
+            dot.node(subtopic_id, subtopic, fillcolor=color, fontcolor='white')
+            dot.edge(topic, subtopic_id)
+    
+    return dot
 
 def main():
-    st.set_page_config(layout="wide", page_title="Mind Map Creator")
+    st.set_page_config(page_title="Mind Map Creator", layout="wide")
     
-    # Add custom CSS
+    # Add custom styling
     st.markdown("""
         <style>
         .stApp {
             background-color: #f5f5f5;
         }
-        .st-emotion-cache-18ni7ap {
-            background-color: #ffffff;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        .main {
+            padding: 2rem;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 2rem;
         }
         </style>
     """, unsafe_allow_html=True)
-
-    create_mindmap()
+    
+    st.title("Interactive Mind Map Creator")
+    
+    # Create tabs for different views
+    tab1, tab2 = st.tabs(["Mind Map View", "About"])
+    
+    with tab1:
+        # Create and display the mind map
+        mind_map = create_mindmap()
+        st.graphviz_chart(mind_map)
+        
+        # Add download button
+        st.download_button(
+            label="Download Mind Map as PDF",
+            data=mind_map.pipe(format='pdf'),
+            file_name="mindmap.pdf",
+            mime="application/pdf"
+        )
+    
+    with tab2:
+        st.markdown("""
+        ### About Mind Mapping
+        
+        Mind mapping is a powerful brainstorming and organization tool that helps you:
+        - Organize information visually
+        - Generate creative ideas
+        - Connect related concepts
+        - Improve memory and retention
+        - Plan projects effectively
+        
+        This tool allows you to visualize mind maps in an intuitive way. You can:
+        - View the complete mind map structure
+        - Download the mind map as a PDF
+        - Use it for various purposes like planning, note-taking, and brainstorming
+        """)
 
 if __name__ == "__main__":
     main()
